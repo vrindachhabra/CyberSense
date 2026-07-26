@@ -1,0 +1,316 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  SOC_ANALYST
+  VIEWER
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+enum ModelStatus {
+  ACTIVE
+  TRAINING
+  RETIRED
+  FAILED
+}
+
+enum EntityType {
+  USER
+  DEVICE
+  NETWORK
+  APPLICATION
+}
+
+enum ActionType {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  EXPORT
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String?
+  role      Role     @default(VIEWER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  alerts        Alert[]        @relation("AssignedAlerts")
+  auditLogs     AuditLog[]
+  notifications Notification[]
+  settings      Settings?
+  sessions      Session[]
+  devices       Device[]
+  accessLogs    AccessLog[]
+  datasets      Dataset[]
+  activities    AlertActivity[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Entity {
+  id          String     @id @default(cuid())
+  type        EntityType
+  name        String
+  description String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  alerts             Alert[]
+  baselineProfiles   BaselineProfile[]
+  anomalyPredictions AnomalyPrediction[]
+
+  @@index([type])
+  @@index([name])
+}
+
+model Device {
+  id         String   @id @default(cuid())
+  macAddress String?  @unique
+  ipAddress  String?
+  hostname   String?
+  ownerId    String?
+  owner      User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  accessLogs AccessLog[]
+
+  @@index([macAddress])
+  @@index([ipAddress])
+  @@index([ownerId])
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ipAddress String?
+  userAgent String?
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  isActive  Boolean   @default(true)
+
+  accessLogs AccessLog[]
+
+  @@index([userId])
+  @@index([isActive])
+}
+
+model AccessLog {
+  id        String     @id @default(cuid())
+  timestamp DateTime   @default(now())
+  action    ActionType
+  resource  String
+  userId    String?
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  deviceId  String?
+  device    Device?    @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  sessionId String?
+  session   Session?   @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  ipAddress String?
+  details   Json?
+
+  @@index([timestamp])
+  @@index([userId])
+  @@index([deviceId])
+  @@index([action])
+}
+
+model Model {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  type        String // e.g., "Isolation Forest", "Autoencoder"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions ModelVersion[]
+
+  @@index([name])
+}
+
+model ModelVersion {
+  id            String      @id @default(cuid())
+  modelId       String
+  model         Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  versionString String
+  status        ModelStatus @default(TRAINING)
+  metrics       Json? // e.g., accuracy, precision, recall
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  trainingRuns       TrainingRun[]
+  baselineProfiles   BaselineProfile[]
+  anomalyPredictions AnomalyPrediction[]
+
+  @@index([modelId])
+  @@index([status])
+}
+
+model TrainingRun {
+  id             String       @id @default(cuid())
+  modelVersionId String
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  startedAt      DateTime     @default(now())
+  completedAt    DateTime?
+  status         ModelStatus  @default(TRAINING)
+  logs           Json?
+
+  @@index([modelVersionId])
+  @@index([status])
+}
+
+model BaselineProfile {
+  id             String        @id @default(cuid())
+  entityId       String
+  entity         Entity        @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  modelVersionId String?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  features       Json // Stored baseline features/statistics
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([entityId, modelVersionId]) // Ensures one live baseline per entity
+  @@index([entityId])
+  @@index([modelVersionId])
+}
+
+model AnomalyPrediction {
+  id             String       @id @default(cuid())
+  entityId       String
+  entity         Entity       @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  modelVersionId String?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  score          Float // Anomaly score
+  isAnomaly      Boolean
+  features       Json? // Features that contributed to the anomaly
+  timestamp      DateTime     @default(now())
+
+  alerts Alert[]
+
+  @@index([entityId])
+  @@index([modelVersionId])
+  @@index([isAnomaly])
+  @@index([timestamp])
+}
+
+model Alert {
+  id                  String             @id @default(cuid())
+  title               String
+  description         String
+  severity            Severity
+  status              AlertStatus        @default(OPEN)
+  entityId            String
+  entity              Entity             @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  anomalyPredictionId String?
+  anomalyPrediction   AnomalyPrediction? @relation(fields: [anomalyPredictionId], references: [id], onDelete: SetNull)
+  assignedToId        String?
+  assignedTo          User?              @relation("AssignedAlerts", fields: [assignedToId], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  activities          AlertActivity[]
+
+  @@index([status])
+  @@index([severity])
+  @@index([entityId])
+  @@index([assignedToId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model Settings {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  preferences Json // User specific preferences (theme, notification settings)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String     @id @default(cuid())
+  userId    String?
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    ActionType
+  resource  String
+  details   Json?
+  ipAddress String?
+  timestamp DateTime   @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([timestamp])
+}
+
+model Dataset {
+  id                String   @id @default(cuid())
+  name              String
+  filename          String
+  sizeBytes         Int
+  rowCount          Int
+  columnCount       Int
+  missingValues     Int
+  anomalyPercentage Float?
+  dataTypes         Json // Stores mapping of column -> data type
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  uploadedById String?
+  uploadedBy   User?   @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([uploadedById])
+}
+
+model AlertActivity {
+  id        String   @id @default(cuid())
+  alertId   String
+  alert     Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type      String   // e.g., "COMMENT", "STATUS_CHANGE", "ASSIGNED"
+  content   String   // The comment text, or description of the action
+  createdAt DateTime @default(now())
+
+  @@index([alertId])
+  @@index([userId])
+}
