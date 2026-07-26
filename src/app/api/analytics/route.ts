@@ -15,7 +15,7 @@ export async function GET() {
 
     // 2. Compute Daily Trend & Risk Trend
     const dailyMap: Record<string, { count: number, totalScore: number }> = {};
-    predictions.forEach(p => {
+    predictions.forEach((p: any) => {
       const date = new Date(p.timestamp).toISOString().split('T')[0];
       if (!dailyMap[date]) dailyMap[date] = { count: 0, totalScore: 0 };
       if (p.isAnomaly) dailyMap[date].count += 1;
